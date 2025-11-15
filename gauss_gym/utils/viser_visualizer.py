@@ -65,7 +65,7 @@ class LeggedRobotViser:
     self,
     env,
     urdf_path: str,
-    port: int = 8080,
+    port: int = 18080,
     dt: float = 1.0 / 60.0,
     force_dt: bool = True,
   ):

@@ -123,6 +123,11 @@ def get_filtered_poses(
   device = 'cuda:0'
   wp_mesh = warp_utils.convert_to_wp_mesh(mesh.vertices, mesh.triangles, device)
 
+  # import open3d as o3d
+  # export_mesh = o3d.geometry.TriangleMesh()
+  # export_mesh.vertices = o3d.utility.Vector3dVector(mesh.vertices.astype(np.float64))
+  # o3d.io.write_triangle_mesh("test.ply", export_mesh)
+
   # Create grid of offsets in xy plane (circle pattern)
   radius = grid_diameter / 2
   grid_1d = np.linspace(-radius, radius, grid_points)
@@ -303,8 +308,9 @@ class GaussGymData(DataIngest):
 
         # Check if this directory is a valid scene
         splatfacto_path = root_path / 'splatfacto'
+        default_gs_path = root_path / 'gs_results'
         meshes_path = root_path / 'meshes'
-        valid_scene = splatfacto_path.exists() and meshes_path.exists()
+        valid_scene = (default_gs_path.exists() or splatfacto_path.exists()) and meshes_path.exists()
 
         if valid_scene:
           scene_name = root if root else 'root'
@@ -405,9 +411,9 @@ class GaussGymData(DataIngest):
           vertices = np.array(mesh_dict['vertices']).astype(np.float32)
           triangles = np.array(mesh_dict['triangles']).astype(np.uint32)
           curr_cam_trans = np.array(mesh_dict['cam_trans']).astype(np.float32)
-          curr_cam_trans = math_utils.smooth_path(
-            curr_cam_trans, smoothing_factor=10, resample_num_points=30
-          )
+          # curr_cam_trans = math_utils.smooth_path(
+          #   curr_cam_trans, smoothing_factor=10, resample_num_points=30
+          # )
           from_ig_rotation = np.array(mesh_dict['from_ig_rotation']).astype(np.float32)
 
         # Compute orientations from camera translations

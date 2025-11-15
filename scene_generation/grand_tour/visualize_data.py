@@ -105,7 +105,7 @@ class DataVisualizer:
   def __init__(
     self,
     data_path: str,
-    port: int = 8080,
+    port: int = 18080,
   ):
     """
     Initialize visualizer with a URDF model, loaded under a single /world node.

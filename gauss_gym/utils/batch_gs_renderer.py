@@ -111,12 +111,13 @@ class BatchPLYRenderer:
     # Read these values from the corresponding .json file of the same name as the splat file
     splat_json_path = ply_path.parent / (ply_path.stem + '_splat.json')
     dataparser_json_path = ply_path.parent / 'dataparser_transforms.json'
-    if splat_json_path.exists():
-      json_path = splat_json_path
-    elif dataparser_json_path.exists():
-      json_path = dataparser_json_path
-    else:
-      raise RuntimeError(f'Could not find JSON file for {ply_path}')
+    # if splat_json_path.exists():
+    #   json_path = splat_json_path
+    # elif dataparser_json_path.exists():
+    #   json_path = dataparser_json_path
+    # else:
+      # raise RuntimeError(f'Could not find JSON file for {ply_path}')
+    json_path = dataparser_json_path
     if json_path.exists():
       with json_path.open('r') as f:
         json_data = json.load(f)
@@ -133,7 +134,9 @@ class BatchPLYRenderer:
           dim=0,
         )
     else:
-      raise RuntimeError(f'Could not find JSON file for {ply_path}')
+      # raise RuntimeError(f'Could not find JSON file for {ply_path}')
+      self.dataparser_scale = 1.0
+      self.dataparser_transform = torch.eye(4, device=self.device, dtype=torch.float32)
 
   def _load_ply_gaussians(self, ply_path: path.Path):
     """Load Gaussian parameters from a PLY file."""
@@ -149,8 +152,14 @@ class BatchPLYRenderer:
     )
 
     # Load scales
+    scale_0 = v['scale_0']
+    scale_1 = v['scale_1']
+    if 'scale_2' in v.data.dtype.names:
+      scale_2 = v['scale_2']
+    else:
+      scale_2 = np.full(scale_0.shape, -6, dtype=scale_0.dtype)
     scales = (
-      torch.from_numpy(np.stack([v['scale_0'], v['scale_1'], v['scale_2']], axis=-1))
+      torch.from_numpy(np.stack([scale_0, scale_1, scale_2], axis=-1))
       .float()
       .to(self.device)
     )

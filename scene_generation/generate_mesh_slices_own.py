@@ -314,73 +314,18 @@ def process_transforms(
   smoothing_factor: int,
   num_poses_after_smoothing: int,
   device: o3d.core.Device,
+  mesh_path: Optional[Path] = None,
 ):
   start = time.time()
   # Camera positions and orientations.
   camera_positions = []
   camera_orientations = []
   for frame in tqdm(transforms):
-    depth_path = Path(frame['depth_file_path'])
-    if depth_path.suffix == '.png':
-      depth = np.array(Image.open(depth_path))  # Reads as 16-bit integer
-      depth = depth.astype(float) / 1000.0  # Convert millimeters to meters
-    elif depth_path.suffix in ('.npy', '.npz'):
-      depth = np.load(depth_path)
-    H, W = depth.shape
-    depth = o3d.t.geometry.Image(
-      o3d.core.Tensor(depth, dtype=o3d.core.Dtype.Float32)
-    ).to(device)
-    intrinsic = o3d.camera.PinholeCameraIntrinsic()
-    intrinsic.set_intrinsics(
-      width=W,
-      height=H,
-      fx=frame['fl_x'],
-      fy=frame['fl_y'],
-      cx=frame['cx'],
-      cy=frame['cy'],
-    )
-    intrinsic = o3d.core.Tensor(intrinsic.intrinsic_matrix, o3d.core.Dtype.Float64)
-    extrinsic = np.array(frame['transform_matrix'])
-    extrinsic = vtf.SE3.from_matrix(extrinsic)
-    extrinsic = vtf.SE3.from_rotation_and_translation(
-      translation=extrinsic.translation(),
-      rotation=extrinsic.rotation() @ vtf.SO3.from_x_radians(-np.pi),
-    ).inverse()
-    extrinsic = o3d.core.Tensor(extrinsic.as_matrix(), dtype=o3d.core.Dtype.Float64)
-    frustum_block_coords = vbg.compute_unique_block_coordinates(
-      depth, intrinsic, extrinsic, depth_scale, depth_max
-    )
-
-    if integrate_color:
-      color_path = Path(frame['file_path'])
-      color = o3d.t.io.read_image(str(color_path)).as_tensor().numpy()
-      color = color.astype(np.float32) / 255.0
-      color = o3d.t.geometry.Image(color).to(device)
-      vbg.integrate(
-        frustum_block_coords,
-        depth,
-        color,
-        intrinsic,
-        intrinsic,
-        extrinsic,
-        depth_scale,
-        depth_max,
-      )
-    else:
-      vbg.integrate(
-        frustum_block_coords,
-        depth,
-        intrinsic,
-        extrinsic,
-        depth_scale,
-        depth_max,
-      )
-
     invalid_key = False
     for key in filter_keys:
-      # Don't add these keys to the camera_positions and camera_orientations.
-      if key in str(depth_path):
+      if key in str(frame['file_path']):
         invalid_key = True
+        break
     if invalid_key:
       continue
     pose = vtf.SE3.from_matrix(np.array(frame['transform_matrix']))
@@ -393,6 +338,22 @@ def process_transforms(
     )
   )
 
+  if mesh_path is None:
+    raise ValueError('mesh_path must be provided when depth data is unavailable.')
+
+  mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+  if mesh.is_empty():
+    raise FileNotFoundError(f'Failed to load mesh or mesh is empty: {mesh_path}')
+  mesh.compute_vertex_normals()
+  mesh_points = np.asarray(mesh.vertices)
+  if mesh_points.size == 0:
+    raise ValueError(f'Mesh at {mesh_path} contains no vertices.')
+
+  pcd = o3d.geometry.PointCloud()
+  pcd.points = o3d.utility.Vector3dVector(mesh_points)
+  if mesh.has_vertex_colors():
+    pcd.colors = o3d.utility.Vector3dVector(np.asarray(mesh.vertex_colors))
+
   # Bounding boxes used to extract slices from input pointcloud.
   bounding_boxes = []
   # Bounding boxes used to check if slices have enough points.
@@ -403,7 +364,7 @@ def process_transforms(
       rectangular_prism(
         camera_positions[i],
         bbox_slice_size,
-        4.0,
+        bbox_slice_size,
         up_axis,
         (1.0, 0.0, 0.0),
         slice_direction,
@@ -411,11 +372,11 @@ def process_transforms(
     )
     point_checking_bounding_boxes.append(
       rectangular_prism(
-        camera_positions[i], 0.2, 4.0, up_axis, (0.0, 0.0, 1.0), slice_direction
+        # camera_positions[i], 0.2, 4.0, up_axis, (0.0, 0.0, 1.0), slice_direction
+        camera_positions[i], 12.0, 12.0, up_axis, (0.0, 0.0, 1.0), slice_direction
       )
     )
 
-  pcd = vbg.extract_point_cloud().cpu().to_legacy()
   return (
     pcd,
     bounding_boxes,
@@ -505,9 +466,14 @@ def preprocess_transforms_colmap(
   camera_intrinsics = _parse_intrinsics()
 
   transforms = []
-  with images_txt.open('r') as f:
-    lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-
+  # with images_txt.open('r') as f:
+  #   lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+  with images_txt.open('r') as src:
+    lines = [
+    raw_line.rstrip('\r\n')
+    for raw_line in src
+    if not raw_line.lstrip().startswith('#')
+    ]
   if len(lines) % 2 != 0:
     raise ValueError(
       'Unexpected COLMAP images.txt format: expected paired lines per image.'
@@ -654,13 +620,25 @@ def get_mesh_at_frac_from_pcd(
   visualize,
   device,
 ):
+  if not point_checking_bounding_boxes:
+    raise ValueError('No valid camera poses available to generate slices.')
   min_bbox_start_idx = 0
-  while not enough_points(pcd, point_checking_bounding_boxes[min_bbox_start_idx], 100):
+  while (
+    min_bbox_start_idx < len(point_checking_bounding_boxes)
+    and not enough_points(pcd, point_checking_bounding_boxes[min_bbox_start_idx], 100)
+  ):
     min_bbox_start_idx += 1
+  if min_bbox_start_idx == len(point_checking_bounding_boxes):
+    raise ValueError('Unable to find a starting slice with sufficient points.')
 
   max_bbox_start_idx = len(camera_positions) - 1
-  while not enough_points(pcd, point_checking_bounding_boxes[max_bbox_start_idx], 100):
+  while (
+    max_bbox_start_idx >= 0
+    and not enough_points(pcd, point_checking_bounding_boxes[max_bbox_start_idx], 100)
+  ):
     max_bbox_start_idx -= 1
+  if max_bbox_start_idx < 0:
+    raise ValueError('Unable to find an ending slice with sufficient points.')
   max_bbox_start_idx = march_idx_along_distance(
     camera_positions, max_bbox_start_idx, buffer_distance + slice_distance, -1, up_axis
   )
@@ -813,13 +791,25 @@ def get_mesh_at_frac_from_mesh(
   visualize,
   device,
 ):
+  if not point_checking_bounding_boxes:
+    raise ValueError('No valid camera poses available to generate slices.')
   min_bbox_start_idx = 0
-  while not enough_points(pcd, point_checking_bounding_boxes[min_bbox_start_idx], 100):
+  while (
+    min_bbox_start_idx < len(point_checking_bounding_boxes)
+    and not enough_points(pcd, point_checking_bounding_boxes[min_bbox_start_idx], 100)
+  ):
     min_bbox_start_idx += 1
+  if min_bbox_start_idx == len(point_checking_bounding_boxes):
+    raise ValueError('Unable to find a starting slice with sufficient points.')
 
   max_bbox_start_idx = len(camera_positions) - 1
-  while not enough_points(pcd, point_checking_bounding_boxes[max_bbox_start_idx], 100):
+  while (
+    max_bbox_start_idx >= 0
+    and not enough_points(pcd, point_checking_bounding_boxes[max_bbox_start_idx], 100)
+  ):
     max_bbox_start_idx -= 1
+  if max_bbox_start_idx < 0:
+    raise ValueError('Unable to find an ending slice with sufficient points.')
   max_bbox_start_idx = march_idx_along_distance(
     camera_positions, max_bbox_start_idx, buffer_distance + slice_distance, -1, up_axis
   )
@@ -893,12 +883,12 @@ def get_mesh_at_frac_from_mesh(
     @ vtf.SO3.from_y_radians(to_ig_euler_xyz[1]).inverse()
     @ vtf.SO3.from_z_radians(to_ig_euler_xyz[2]).inverse()
   )
-  curr_mesh, curr_camera_positions, curr_camera_orientations = rotate_mesh_and_cameras(
-    curr_mesh,
-    curr_camera_positions,
-    curr_camera_orientations,
-    rotation,
-  )
+  # curr_mesh, curr_camera_positions, curr_camera_orientations = rotate_mesh_and_cameras(
+  #   curr_mesh,
+  #   curr_camera_positions,
+  #   curr_camera_orientations,
+  #   rotation,
+  # )
 
   curr_camera_orientations = vtf.SO3.from_matrix(
     curr_camera_orientations
@@ -969,13 +959,17 @@ def main(_):
   if not Path.exists(save_dir):
     Path.mkdir(save_dir)
 
+  mesh_path = load_dir / 'gs_results/train/ours_1/fuse_post.ply'
+  if not mesh_path.exists():
+    raise FileNotFoundError(f'Precomputed mesh not found at {mesh_path}')
+
   transforms = {
     'ns': preprocess_transforms_ns,
     'arkit': preprocess_transforms_arkit,
     'grandslam': preprocess_transforms_grandslam,
     'colmap': preprocess_transforms_colmap,
   }[config.format](load_dir)
-  transforms = maybe_apply_optimized_poses(load_dir, transforms)
+  # transforms = maybe_apply_optimized_poses(load_dir, transforms)
   (
     pcd,
     bounding_boxes,
@@ -995,16 +989,27 @@ def main(_):
     config.smoothing_factor,
     config.num_poses_after_smoothing,
     device,
+    mesh_path,
   )
   pcd = pcd.voxel_down_sample(config.voxel_size)
   if config.load_mesh:
     # pcd = o3d.io.read_point_cloud(load_dir / 'point_cloud.ply')
-    mesh = o3d.io.read_triangle_mesh(load_dir / 'raw.glb', enable_post_processing=True)
-    # mesh = mesh.subdivide_midpoint(number_of_iterations=1)
-    mesh_info_json = json.load(open(load_dir / 'mesh_info.json'))
-    transform = np.array(mesh_info_json['alignmentTransform']).reshape(4, 4).T
-    mesh = mesh.transform(np.linalg.inv(transform))
-    mesh.vertices = o3d.utility.Vector3dVector(np.array(mesh.vertices)[:, [2, 0, 1]])
+    mesh = o3d.io.read_triangle_mesh(mesh_path)
+    print(f"下采样前mesh三角形数量: {len(mesh.triangles)}")
+    mesh = mesh.simplify_vertex_clustering(
+      voxel_size=getattr(config, 'mesh_voxel_size', config.voxel_size),
+      contraction=o3d.geometry.SimplificationContraction.Average,
+    )
+    mesh.remove_degenerate_triangles()
+    mesh.remove_duplicated_triangles()
+    mesh.remove_non_manifold_edges()
+    mesh.remove_unreferenced_vertices()
+    print(f"下采样后mesh三角形数量: {len(mesh.triangles)}")
+    # # mesh = mesh.subdivide_midpoint(number_of_iterations=1)
+    # mesh_info_json = json.load(open(load_dir / 'mesh_info.json'))
+    # transform = np.array(mesh_info_json['alignmentTransform']).reshape(4, 4).T
+    # mesh = mesh.transform(np.linalg.inv(transform))
+    # mesh.vertices = o3d.utility.Vector3dVector(np.array(mesh.vertices)[:, [2, 0, 1]])
 
   if config.visualize:
     camera_point_cloud = o3d.geometry.PointCloud()

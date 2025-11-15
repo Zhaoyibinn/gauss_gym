@@ -13,6 +13,24 @@ POLYCAM_PATH="$1"
 
 ns-process-data polycam --use-depth --data $POLYCAM_PATH --output-dir $POLYCAM_PATH
 
+cat <<CMD
+ns-train splatfacto \
+--pipeline.model.use-scale-regularization=True \
+--pipeline.model.output-depth-during-training=False \
+--pipeline.model.rasterize-mode=antialiased \
+--pipeline.model.camera-optimizer.mode=SO3xR3 \
+--pipeline.model.use-bilateral-grid=True \
+--pipeline.model.strategy=mcmc \
+--experiment-name '' \
+--timestamp '' \
+--output-dir $POLYCAM_PATH \
+--viewer.quit-on-train-completion True \
+nerfstudio-data \
+--data $POLYCAM_PATH \
+--train-split-fraction=1.0 \
+--depth-unit-scale-factor=0.001
+CMD
+
 ns-train splatfacto \
     --pipeline.model.use-scale-regularization=True \
     --pipeline.model.output-depth-during-training=False \

@@ -1,6 +1,8 @@
 from typing import Tuple
 import torch
 import numpy as np
+from gauss_gym.utils.path import Path
+
 
 from gauss_gym.utils import (
   visualization,
@@ -361,7 +363,12 @@ class GaussianSplattingRenderer:
 
     self.scene_path_map = {}
     for s, f in self.terrain.mesh_keys:
-      self.scene_path_map[s] = self.terrain.get_mesh(s, f).splatpath / 'splat.ply'
+      if self.terrain.get_mesh(s, f).splatpath.exists():
+        self.scene_path_map[s] = self.terrain.get_mesh(s, f).splatpath / 'splat.ply'
+      else:
+        root_path_str = str(self.terrain.get_mesh(s, f).splatpath).rsplit("/",1)[0]
+        root_path = Path(root_path_str)
+        self.scene_path_map[s] = root_path / 'gs_results' / 'point_cloud' / "iteration_1" / "point_cloud.ply"
     self.path_scene_map = {v: k for k, v in self.scene_path_map.items()}
     self._gs_renderer = batch_gs_renderer.MultiSceneRenderer(
       list(self.scene_path_map.values()),

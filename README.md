@@ -1,3 +1,37 @@
+# Gauss_gym Fork ECUST 3DVGroup
+
+这是一个来自华东理工大学(ECUST)机械电子实验室三维重建(3DV)小组的Gauss_gym Fork
+Yibin Zhao; Jun Nan; Yihan Pan
+## 格式转换
+用于将PolyCam格式转换到Gauss_gym可以用的格式
+1. 采用PolyCam采集RAW格式的图像，将keyframes文件夹放置在${root}文件夹内
+
+2. 将PolyCam格式转换到Colmap格式
+```
+python gauss_gym/scripts/keyframe_depth_to_ply.py --root-dir ${root}
+```
+3. 将Colmap格式的文件采用各种GS训练，注意训练结果保存在${root}下的gs_results文件夹内（也就是gs_results里面有point_cloud和train文件夹）
+
+4. 将训练好的mesh（切片）转换到Gauss_gym可以用的格式
+其中bbox_slice_size为mesh分段用的，如果是一个小场景就可以把这个值放大；voxel_size是为了下采样mesh的，因为很多时候GS出的Mesh有点太大了
+```
+python scene_generation/generate_mesh_slices_own.py --config=scene_generation/configs/own.py --config.load_dir=${root} --config.bbox_slice_size=10.0 --config.voxel_size=0.01
+```
+
+5. 在Gauss_gym环境中训练这个场景
+```
+python gauss_gym/scripts/train.py --task=t1 --terrain.scenes.iphone_data.repo_id=local:${root} --env.num_envs 512 --env.force_renderer=True
+```
+
+如果显示502 端口号错误，可能是因为代理的原因，记得取消代理
+```
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY no_proxy
+```
+
+因为沟槽的gitlab占用了8080端口号，所以改用18080可视化
+
+
+
 <h1 align="center">GaussGym</h1>
 
 <p align="center">

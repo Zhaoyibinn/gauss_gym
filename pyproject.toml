@@ -41,7 +41,12 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["gauss_gym", "deployment"]
+packages = { find = { include = ["gauss_gym", "gauss_gym.*", "deployment", "deployment.*", "resources", "resources.*"] } }
+include-package-data = true
+
+[tool.setuptools.package-data]
+gauss_gym = ["**/*.yaml", "**/*.yml"]
+resources = ["**/*"]
 
 # Tell uv where "isaacgym" comes from (local path) and to install it editable
 [tool.uv.sources]

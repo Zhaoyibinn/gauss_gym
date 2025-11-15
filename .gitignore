@@ -62,3 +62,11 @@ isaacgym/*
 .cache/*
 
 isaacgym/
+
+dataset
+build
+
+test.py
+test.ply
+test.png
+test.mp4

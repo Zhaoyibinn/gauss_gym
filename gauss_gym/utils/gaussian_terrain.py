@@ -110,11 +110,14 @@ class GaussianTerrain:
       utils.print(
         f'Loading {num_scenes_from_source} scenes from {source_name}...', color='cyan'
       )
+      
 
       data_ingest = getattr(scene_ingest, class_name)(**source_cfg)
 
       # Download and load scenes
+      # 不加代理就会卡在这里 proxy
       data_ingest.download_scenes(max_num_scenes=num_scenes_from_source)
+      
       meshes = data_ingest.load_meshes(cams_yaw_only=cams_yaw_only)
       all_meshes.extend(meshes)
 
